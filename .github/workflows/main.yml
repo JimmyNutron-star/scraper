@@ -4,7 +4,6 @@ name: Odibets Integrated Scraper
 on:
   schedule:
     # Run at specific times (adjust based on when matches start)
-    # This example runs at 10:00 AM, 2:00 PM, and 6:00 PM UTC
     - cron: '0 10,14,18 * * *'
   
   # Allow manual trigger from GitHub UI
@@ -27,47 +26,63 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4  # Updated to v4
+      uses: actions/checkout@v4
     
     - name: Set up Python
-      uses: actions/setup-python@v5  # Updated to v5
+      uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip'  # Added caching for faster installs
+        cache: 'pip'
     
     - name: Install Chrome
       run: |
         sudo apt-get update
         sudo apt-get install -y google-chrome-stable
-        chrome --version
+        google-chrome --version  # Fixed: changed 'chrome' to 'google-chrome'
+        which google-chrome
     
-    - name: Install dependencies
+    - name: Install ChromeDriver
+      run: |
+        # Get Chrome version
+        CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+' | head -1)
+        echo "Chrome version: $CHROME_VERSION"
+        
+        # Install matching ChromeDriver
+        sudo apt-get install -y unzip
+        wget -q "https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
+        unzip -q chromedriver-linux64.zip
+        sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
+        sudo chmod +x /usr/local/bin/chromedriver
+        chromedriver --version
+    
+    - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install selenium==4.18.1
+        # webdriver-manager is optional now since we installed ChromeDriver manually
     
     - name: Run Odibets Scraper
       env:
         SCRAPING_MODE: ${{ github.event.inputs.mode || 'full' }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        DISPLAY: :99  # Required for Chrome in headless mode
       run: |
         python odibets_github_scraper.py
-      continue-on-error: true  # Continue even if script fails to still upload artifacts
+      continue-on-error: true
     
     - name: Upload scraping results
-      uses: actions/upload-artifact@v4  # Updated to v4
+      uses: actions/upload-artifact@v4
       with:
         name: odibets-scraped-data-${{ github.run_id }}
         path: odibets_scraped_data/
         retention-days: 30
-        if-no-files-found: warn  # Warn if no files found instead of failing
+        if-no-files-found: warn
     
     - name: Commit and push results
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add odibets_scraped_data/
-        # Only commit if there are changes
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
@@ -75,8 +90,3 @@ jobs:
           git push
         fi
       continue-on-error: true
-    
-    - name: Send notification on failure
-      if: failure()
-      run: |
-        echo "::error::Scraping job failed! Check the logs for details."
